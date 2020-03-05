@@ -1,0 +1,262 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(caTools) # splits
+library(rpart) # CART
+library(rpart.plot) # CART plotting
+library(caret) # cross validation
+library(MASS)
+library(car)
+library(topicmodels)
+
+```
+
+
+```{r}
+letters<- read.csv("Letters.csv")
+head(letters)
+```
+```{r}
+# Very important below!!! 
+# transform Violate from 0-1 variable to a factor variable, otherwise CART may try it as regression
+letters$letter <- as.factor(letters$letter)
+letters$letter
+```
+
+
+
+
+
+```{r}
+letters$category[letters$letter == 'R'] = 1
+letters$category[letters$letter == 'A'|letters$letter == 'B'|letters$letter == 'P'] = 0
+letters$category <- as.numeric(letters$category)
+letters$category
+
+```
+
+```{r}
+set.seed(144)
+```
+```{r}
+split = sample.split(letters$letter, SplitRatio = 0.7)
+
+# what is a split?
+letters.train <- filter(letters, split == TRUE) # is split a variable in loans?
+letters.test <- filter(letters, split == FALSE)
+
+# How many letters have defaulted?
+table(letters.train$category)
+table(letters.test$category)
+
+```
+
+```{r}
+#baseline model of training 
+accBaseline <-  (528)/(548+533+561+528)
+accBaseline
+
+#baseline model of test set
+acctestBase <- 226/(235+229+240+226)
+acctestBase
+```
+
+
+
+```{r}
+mod <- glm(category ~ xbox + ybox + width + height + onpix + xbar + ybar + x2bar + y2bar + xybar + x2ybar + xy2bar + xedge + xedgeycor + yedge + yedgexcor, data=letters.train, family="binomial")
+summary(mod)
+```
+
+```{r}
+mod3 <- glm(category ~ xbox + ybar + y2bar + xybar + x2ybar + xy2bar + xedge + xedgeycor + yedge + yedgexcor, data=letters.train, family="binomial")
+summary(mod3)
+```
+```{r}
+# Predictions on the test set 
+predTest = predict(mod3, newdata=letters.test, type="response")
+# If you don't include "type="response"", then predTest will
+# return -(b0 + b1*x1 + b2*x2 +...).
+# Values could range from -Inf to +Inf.
+summary(predTest)
+```
+```{r}
+table(letters.test$category, predTest > 0.45)
+accBaseline
+acctestBase
+accpred_06 <- (151 +674) / (235+229+240+226)
+accpred_05 <- (662 + 165) /(235+229+240+226)
+accpred_04 <- (176 + 654) /(235+229+240+226)
+accpred_03 <- (636 + 185) /(235+229+240+226)
+accpred_045 <- (658 + 173) /(235+229+240+226) 
+accpred_05
+accpred_06
+accpred_04
+accpred_03
+accpred_045
+```
+```{r}
+library(ROCit)
+
+ROCit_obj <- rocit(score=predTest,
+                   class=letters.test$category)
+plot(ROCit_obj)
+
+ROCit_obj$TPR[which.max(ROCit_obj$TPR-ROCit_obj$FPR)]
+ROCit_obj$FPR[which.max(ROCit_obj$TPR-ROCit_obj$FPR)]
+ROCit_obj$Cutoff[which.max(ROCit_obj$TPR-ROCit_obj$FPR)]
+#Optimal Threshold = 0.3374
+ROCit_obj$AUC
+table(letters.test$category, predTest > 0.3374669)
+acc <-(643 +183)/ (643 +183+43 + 61)
+acc
+```
+
+```{r}
+mod <- rpart(category ~ xbox + ybox + width + height + onpix + xbar + ybar + x2bar + y2bar + xybar + x2ybar + xy2bar + xedge + xedgeycor + yedge + yedgexcor, data=letters.train, method="class", 
+            parms=list(split='information'), 
+            # information here stands for information gain,
+            # which means we choose cross-entropy as our split rule.
+            minbucket=5, cp = 0.00)
+mod
+prp(mod)
+```
+
+
+```{r}
+pred1 <- predict(mod, newdata = letters.test, type = "class")
+table(letters.test$category, pred1)
+acc <- (677+207)/(677+182+44+27)
+TPR = (207)/ (207+19)
+FPR = 1 - (677)/(677+27)
+TPR
+FPR
+acc
+```
+
+```{r}
+mean(pred1 == letters.test$category)
+```
+
+
+```{r}
+loss.mat <- cbind(c(0, 20), c(1, 0)) # cbind is column bind, rbind is row bind
+loss.mat
+# adding loss function to a list of "parms"
+mod2 = rpart(category ~ xbox + ybox + width + height + onpix + xbar + ybar + x2bar + y2bar + xybar + x2ybar + xy2bar + xedge + xedgeycor + yedge + yedgexcor, data=letters.train, method="class",
+             parms=list(loss = loss.mat),
+             minbucket = 5, cp = 0.01)
+prp(mod2, digits=3)
+```
+```{r}
+pred2 <- predict(mod2, newdata = letters.test, type = "class")
+table(letters.test$category, pred2)
+mean(pred2 == letters.test$category)
+```
+```{r}
+acc2 <- (528+221)/(44+182+27+677)
+acc2
+```
+
+
+```{r}
+modcv = train(category ~ xbox + ybox + width + height + onpix + xbar + ybar + x2bar + y2bar + xybar + x2ybar + xy2bar + xedge + xedgeycor + yedge + yedgexcor,
+                    data = letters.train,
+                    method = "rpart",
+                    tuneGrid = data.frame(cp = seq(0, .04, by=.002)),
+                    trControl = trainControl(method="cv", number=5))
+modcv$results # please ignore kappa
+modcv
+```
+
+
+```{r}
+mod4 <- rpart(letter ~ xbox + ybox + width + height + onpix + xbar + ybar + x2bar + y2bar + xybar + x2ybar + xy2bar + xedge + xedgeycor + yedge + yedgexcor, data=letters.train, method="class", 
+            parms=list(split='information'), 
+            # information here stands for information gain,
+            # which means we choose cross-entropy as our split rule.
+            minbucket=5, cp = 0.00)
+            
+mod4
+prp(mod4)
+```
+
+```{r}
+pred4 <- predict(mod4, newdata = letters.test, type = "class")
+table(letters.test$letter, pred4)
+mean(pred4 == letters.test$letter)
+
+```
+```{r}
+
+
+fit_lda <- lda(letter~., data = letters.train)
+coef(fit_lda)
+
+
+```
+
+```{r}
+mod7 <- rpart(letter ~ xbox + ybox + width + height + onpix + xbar + ybar + x2bar + y2bar + xybar + x2ybar + xy2bar + xedge + xedgeycor + yedge + yedgexcor, data=letters.train, method="class", 
+            parms=list(split='information'), 
+            # information here stands for information gain,
+            # which means we choose cross-entropy as our split rule.
+            minbucket=5, cp = 0.00)
+mod7
+prp(mod7)
+printcp(mod7) # display the results 
+plotcp(mod7) # visualize cross-validation results 
+summary(mod7) # detailed summary of splits
+
+```
+
+```{r}
+library(randomForest)
+library(ggplot2)
+library(dplyr)
+require(caTools)
+rf <- randomForest(
+  letter ~ .,
+  data=letters.train,
+  ntree=500, mtry = 16,importance = TRUE)
+
+rf
+
+```
+```{r}
+pred11 = predict(rf, newdata=letters.test)
+```
+```{r}
+table(letters.test$letter, pred11)
+acc_rf <- mean(pred11 == letters.test$letter)
+acc_rf
+
+```
+
+
+
+
+
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+
+
+
+
+
